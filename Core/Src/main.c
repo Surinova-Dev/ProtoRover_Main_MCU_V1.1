@@ -62,9 +62,12 @@ uint8_t Bt_Count;
 /////////////CAN/////////////////////////////////
 CAN_TxHeaderTypeDef TxHeader;
 CAN_RxHeaderTypeDef RxHeader;
-
+CAN_TxHeaderTypeDef TxHeader2;
+CAN_RxHeaderTypeDef RxHeader2;
 uint8_t TxData[8];
 uint8_t RxData[8];
+uint8_t TxData2[8];
+uint8_t RxData2[8];
 
 uint32_t TxMailBox;
 uint16_t Node_Id[20];
@@ -75,21 +78,22 @@ uint8_t close_loop[4]={8,0,0,0};
 
 
 #define  VEL_ID  0x0D;
+#define  POS_ID  0x0C;
 ////////////////////////////////////////////////
 
 //////////////////IMU_PID/////////////////////////
 float D_Yaw,D_Pitch,D_Roll=0;
-uint8_t I2cReadBuff[11];
-uint8_t I2cWriteBuff[11];
+uint8_t I2cReadBuff[6];
+uint8_t I2cWriteBuff[6];
 int Address_imu  = 0x28<<1;
 float Err_Roll,Err_Pitch=0;
 float Err_Slope_Roll,Err_Slope_Pitch=0;
-float Err_Area_Roll,Err_Area_Pitch=0;
-float Home_Roll=-0.35,Home_Pitch=0.78;
+float Err_Area_Roll,Err_Area_Pitch;
+float Home_Roll=-6.06,Home_Pitch=8.43;
 float Pitch_boundary=0.5;
-float D_Kp_Roll=0.06,D_Kp_Pitch=0.065;
-float D_Ki_Roll=0,D_Ki_Pitch=0.15;
-float D_Kd_Roll=0,D_Kd_Pitch=0.25;
+float D_Kp_Roll=0.06,D_Kp_Pitch=0.3;
+float D_Ki_Roll=0,D_Ki_Pitch=0.3;
+float D_Kd_Roll=0,D_Kd_Pitch=0.276;
 float Roll_Speed,Pitch_Speed=0;
 float Roll_Speed_PID,Pitch_Speed_PID=0;
 float Roll_Speed_P,Roll_Speed_I,Roll_Speed_D=0;
@@ -99,6 +103,9 @@ float Error_Change_Pitch_PID=0;
 float Prev_Error_Roll=0;
 float Prev_Error_Pitch=0;
 double dt=0.01 ;
+uint16_t zero=0;
+
+float Ratio=0.111;
 ///////////////////////////////////////////////////////
 
 ////////////////////Wheels//////////////////////////////
@@ -134,30 +141,8 @@ static void MX_CAN2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-////////////////// Joystick/////////////////////////////////////////////////////
-void Joystick_Data(void){
-	
-	if((Bt_Data[0]==0xAA && Bt_Data[7]==0xFF ))
-		{
-			Mode = Bt_Data[1];
-			 
-			Speed = Bt_Data[2];
-			
-			Steer_mode = Bt_Data[3];
-			
-			Steer_Angle =Bt_Data[4] ;
-			
-			Joystick= Bt_Data[5];
-			
-			Sheering = Bt_Data[6];
-		}
- }
 
- //////////////////////////////////////////////////////////////////////////////
- 
- ///////////////////////////CAN////////////////////////////////////////////////
- 
- float float16_to_decimal(uint16_t float16) {
+float float16_to_decimal(uint16_t float16) {
     // Extract the sign, exponent, and mantissa
     uint16_t sign = (float16 >> 15) & 0x1;
     uint16_t exponent = (float16 >> 10) & 0x1F;
@@ -178,7 +163,64 @@ void Joystick_Data(void){
  
     return decimal_value;
 }
+////////////////// Joystick/////////////////////////////////////////////////////
+void Joystick_Data(void){
+		//HAL_UART_Receive_IT(&huart4,Bt_Data ,sizeof(Bt_Data));			
+	if((Bt_Data[0]==0xAA && Bt_Data[7]==0xFF ))
+		{
+			Mode = Bt_Data[1];
+			 
+			Speed = Bt_Data[2];
+			
+			Steer_mode = Bt_Data[3];
+			
+			Steer_Angle =Bt_Data[4] ;
+			
+			Joystick= Bt_Data[5];
+			
+			Sheering = Bt_Data[6];
+		}
+ }
+
+ //////////////////////////////////////////////////////////////////////////////
  
+ //////////////////////////////IMU-BNO055//////////////////////////////////////
+ 	uint8_t I2cSensorWrite(uint8_t RegAdd, uint8_t I2cData)
+{
+	HAL_I2C_Mem_Write(&hi2c3,Address_imu,RegAdd,I2C_MEMADD_SIZE_8BIT,&I2cData,1,100);
+	return 0;
+}
+
+uint8_t   I2cSensorRead(uint8_t RegAdd)
+{
+	uint8_t ReadData;
+	HAL_I2C_Mem_Read(&hi2c3,Address_imu,RegAdd,I2C_MEMADD_SIZE_8BIT,&ReadData,1,100);	
+	return ReadData;
+}
+
+void SensorSetting()
+	{
+			I2cSensorWrite(0x07,0x01);  // 0x07 -> Page selection Register   0x01 -> select page 1
+			I2cSensorWrite(0x08,0x0F);  //0x0f acc_config 16g
+			I2cSensorWrite(0x07,0x00);  // 0x07 -> Page selection Register   0x00 -> select page 0
+			I2cSensorWrite(0x3D,0x0C);  //0x3D -> Operation Mode 0x0C -> NDOF mode
+		
+}
+	
+void Read_IMU()
+{			
+
+		if(HAL_I2C_Mem_Read(&hi2c3,Address_imu,0x1A,I2C_MEMADD_SIZE_8BIT,I2cReadBuff,6,1000) == HAL_OK)
+		{
+			
+			D_Yaw   =((int16_t)(I2cReadBuff[1]<<8 | I2cReadBuff[0]))/16.0;	
+			D_Roll  =((int16_t)(I2cReadBuff[3]<<8 | I2cReadBuff[2]))/16.0;
+			D_Pitch =((int16_t)(I2cReadBuff[5]<<8 | I2cReadBuff[4]))/16.0;
+		}
+}
+ //////////////////////////////////////////////////////////////////////////////
+ 
+ ///////////////////////////Callback-Functions//////////////////////////////////////////////// 
 	void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan1)
 {
 	HAL_CAN_GetRxMessage(hcan1, CAN_RX_FIFO0, &RxHeader, RxData);
@@ -191,21 +233,26 @@ void Joystick_Data(void){
 	   Node_Id[Received_Node_Id]++;
 	}	
 
-  if(RxHeader.StdId == 0x013){
-		Node_Id[9]++;
-		uint16_t Pitch=RxData[0]<<8|RxData[1];
-		D_Pitch=float16_to_decimal(Pitch);
-		uint16_t Roll=RxData[2]<<8|RxData[3];
-		D_Roll=float16_to_decimal(Roll);
-	  uint16_t Yaw=RxData[4]<<8|RxData[5];
-		D_Yaw=float16_to_decimal(Yaw);
-	}	
+
 }
 
+	void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan2)
+{
+	HAL_CAN_GetRxMessage(hcan2, CAN_RX_FIFO1, &RxHeader2, RxData2);
+	
+	if(RxHeader2.StdId==0x09){
+		
+    Node_Id[9]++;
+			D_Roll   =((int16_t)(RxData2[1]<<8 | RxData2[0]))/16.0;	
+			D_Pitch  =((int16_t)(RxData2[3]<<8 | RxData2[2]))/16.0;
+	//		D_Pitch =((int16_t)(RxData2[5]<<8 | RxData2[4]))/16.0;
+	}		
+
+
+}
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 			HAL_UART_Receive_IT(&huart4,Bt_Data ,sizeof(Bt_Data));
-//			Joystick_Reception();
 			
 }
 	int CAN_Transmit(uint16_t Std_Id,uint8_t dlc,uint8_t rtr,uint8_t *data)
@@ -256,6 +303,14 @@ void Gimbal_Speed(uint16_t id, uint8_t* data)
 	HAL_Delay(1);
 }
 //////////////////////////////////////////////////////////////////////////////
+void Position(uint16_t id, uint8_t* data)
+{
+	
+	Gimbal_id_temp=(id << 5) | POS_ID;
+	CAN_Transmit(Gimbal_id_temp,4,CAN_RTR_DATA,data);
+	HAL_Delay(1);
+}
+
 
 ///////////////////////////Wheels_Block//////////////////////////////////////
 void Wheels_Block()
@@ -270,22 +325,23 @@ void Wheels_Block()
 			     
 		       for(int i=1;i<7;i++)
            { 
-						Velocity[0] = ((i == 4) || (i == 6))? -0.5*Speed :((i == 2) || (i == 5))? 0: 0.5*Speed;
+						Velocity[0] = ((i == 4) || (i == 6))? 0.5*Speed :((i == 2) || (i == 5))? 0: -0.5*Speed;
 					  memcpy(TxData,&Velocity,4);						 
 						Wheels_speed(i,TxData);HAL_Delay(5);
+
 					 }
-					 break;
+					break;
             					 
 				   
     case 2 : 
 			     	
 		       for(int i=1;i<7;i++)
            {
-             Velocity[0] = ((i == 4) || (i == 6))? 0.5*Speed :((i == 2) || (i == 5))? 0: -0.5*Speed;
+             Velocity[0] = ((i == 4) || (i == 6))? -0.5*Speed :((i == 2) || (i == 5))? 0: 0.5*Speed;
              memcpy(TxData,&Velocity,4);							 
 		         Wheels_speed(i,TxData);HAL_Delay(5);
 					 }
-					 break;	
+					 break;
    
     case 0 : 
 			      Velocity[0]=0;						 
@@ -294,6 +350,7 @@ void Wheels_Block()
            {	
 		         Wheels_speed(i,0);HAL_Delay(5);
 					 }
+		       
 					 break;
 					 
 		default :
@@ -365,10 +422,11 @@ void Gimble()
 {
 	Err_Roll = D_Roll - Home_Roll;
 	Roll_Speed=Roll_PID(Err_Roll);
+	Roll_Speed=-Roll_Speed;
 	
 	Err_Pitch = D_Pitch - Home_Pitch;
 	Pitch_Speed=Pitch_PID(Err_Pitch);
-	//Pitch_Speed=Pitch_Speed*(0.01);
+	Pitch_Speed=-Pitch_Speed;
 	
 	memcpy(TxData,&Roll_Speed,4);
 	Gimbal_Speed(8,TxData);
@@ -376,12 +434,33 @@ void Gimble()
 	//Pitch_Speed= Pitch_Speed < -1.25 ? -1.25 : Pitch_Speed > 1.25 ? 1.25 : Pitch_Speed;	
 	
 	Pitch_Speed = ((D_Pitch < (Home_Pitch + Pitch_boundary)) && (D_Pitch > (Home_Pitch - Pitch_boundary))) ? 0:Pitch_Speed;
-	Pitch_Speed= Pitch_Speed < 0.05 && Pitch_Speed > -0.05 ? 0 : Pitch_Speed;
+	Pitch_Speed= Pitch_Speed < 0.3 && Pitch_Speed > -0.3? 0 : Pitch_Speed;
 	//Pitch_Speed=(D_Pitch <-2.78&& D_Pitch > -2.78) || (D_Pitch >178 && D_Pitch <180) ? 0:Pitch_Speed;
- 	memcpy(TxData,&Pitch_Speed,4);
+ 	 memcpy(TxData,&Pitch_Speed,4);
 	 Gimbal_Speed(7,TxData);
 		
 }
+
+//void position_control(void){
+//	Err_Roll=D_Roll - Home_Roll;
+//	
+//	Err_Pitch = D_Pitch - Home_Pitch;
+//	
+//	Roll_Speed=Err_Roll*Ratio;
+//	Pitch_Speed=Err_Pitch*Ratio;
+//	Pitch_Speed = -Pitch_Speed;
+//	
+//	memcpy(TxData,&Roll_Speed,4);	
+//	Position(8,TxData);
+//	memcpy(TxData,&Pitch_Speed,4);
+//	
+//	//if(D_Pitch > Home_Pitch + 0.5 && D_Pitch < Home_Pitch -0.5){
+//	    Position(7,TxData);
+//	//}   
+
+//	
+//	
+//}
 ////////////////////////////////////////////////////////////////////
 
 ///////////////////////////////PID/////////////////////////////////
@@ -413,6 +492,7 @@ float Pitch_PID(float Error){
 	Pitch_Speed_D=Err_Slope_Pitch * D_Kd_Pitch;
 	
 	Pitch_Speed_PID=Pitch_Speed_P+Pitch_Speed_I+Pitch_Speed_D;
+	Pitch_Speed_PID=-Pitch_Speed_PID;
 	Prev_Error_Pitch=Error;
 	
 	 return Pitch_Speed_PID;
@@ -423,7 +503,7 @@ float Pitch_PID(float Error){
 void Frame_Block()
 {
 	
-	if(Joystick != Test_temp && Steer_mode == 3 )
+	if(Joystick != Test_temp && Steer_mode == 4 )
 	{
 		
 	  switch (Joystick)
@@ -431,43 +511,7 @@ void Frame_Block()
 		case 1 : 
 			     
 		       
-						Velocity[0] = 0.25;
-					  memcpy(TxData,&Velocity,4);						 
-						Wheels_speed(8,TxData);HAL_Delay(1);
-					 
-					 break;
-            					 
-				   
-    case 2 : 
-			     	
-		       
-             Velocity[0] = -0.25;
-             memcpy(TxData,&Velocity,4);							 
-		         Wheels_speed(8,TxData);HAL_Delay(1);
-					 
-					 break;	
-   
-    case 0 : 
-			      Velocity[0]=0;						 
-						memcpy(TxData,&Velocity,4);
-		       
-		         Wheels_speed(8,0);HAL_Delay(1);
-					 
-					 break;
-					 
-		default :
-             break;			
-     }
-	 }
-		
- else if(Joystick != Test_temp && Steer_mode == 4 )
-	{
-	  switch (Joystick)
-	  {		
-		case 1 : 
-			     
-		       
-						Velocity[0] = 0.25;
+						Velocity[0] = 0.5;
 					  memcpy(TxData,&Velocity,4);						 
 						Wheels_speed(7,TxData);HAL_Delay(1);
 					 
@@ -477,7 +521,7 @@ void Frame_Block()
     case 2 : 
 			     	
 		       
-             Velocity[0] = -0.25;
+             Velocity[0] = -0.5;
              memcpy(TxData,&Velocity,4);							 
 		         Wheels_speed(7,TxData);HAL_Delay(1);
 					 
@@ -494,6 +538,15 @@ void Frame_Block()
 		default :
              break;			
      }
+	 }
+		
+ else if(Steer_mode == 3 )
+	{
+			       
+						Velocity[0] = 0.8;
+					  memcpy(TxData,&Velocity,4);						 
+						Position(7,TxData);HAL_Delay(1);
+	
 	 }
 		Test_temp=Joystick;
  }
@@ -539,14 +592,21 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	HAL_UART_Receive_IT(&huart4,Bt_Data,sizeof(Bt_Data));
 	
-	HAL_CAN_Start(&hcan1);HAL_Delay(100);
+	HAL_CAN_Start(&hcan1);
+	HAL_CAN_Start(&hcan2);
+	HAL_Delay(100);
 	HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-	HAL_Delay(2000);
+	HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO1_MSG_PENDING);
+  HAL_Delay(5000);
 	for(int i=1;i<9;i++)
 	{
-		for(int j=0;j<2;j++){
+		if(i==2 || i==5){
+		}
+		else{
+	for(int j=0;j<2;j++){
 	is_Armed(i);
-	HAL_Delay(200);
+	HAL_Delay(10);
+	}
   }
 	}
 
@@ -559,22 +619,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	
 
-			Joystick_Data();
-//		if (Steer_mode!=3 && Steer_mode!=4){
-//		Gimble();
-
-//		}
-//		else{
-		
-	//	Frame_Block();
-//		}
-		
-		Wheels_Block();
-		//Read_IMU();
-		
-		
-//		Skid_Turn();
+		Joystick_Data();
+//		if (Steer_mode!=3 && Steer_mode!=4 && Mode == 2){
+	//	Gimble();
+//		}		
+//	 if(Mode == 1 )
+//	 {
+//		Frame_Block();
+//	 }
+		Wheels_Block();	
+		//Skid_Turn();
 		
   }
   /* USER CODE END 3 */
